@@ -397,8 +397,7 @@ graph TD
        - 从多个数据源获取价格
        - DataStream或签名数据
     2. **价格提交**
-       - 调用setPrices()或
-       - setPricesForAtomicAction()
+       - 调用setPrices()
     3. **订单执行**
        - 批量处理订单
        - 按优先级执行`"]
