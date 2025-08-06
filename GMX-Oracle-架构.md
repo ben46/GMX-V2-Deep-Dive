@@ -170,10 +170,23 @@ graph TD
 ### 核心机制区别
 
 **1. 原子操作 vs 常规操作**
-- **原子操作** (`setPricesForAtomicAction`): 需要即时价格确认的操作，如原子提取、配置执行
-- **常规操作** (`setPrices`): 由Keeper提交价格的操作，如订单执行、清算
+- **原子操作** (`setPricesForAtomicAction`): 
+  - 需要即时价格确认的操作，如原子提取、配置执行
+  - **必须验证L2排序器(Sequencer)状态** - 确保排序器处于正常运行状态
+  - 如果排序器离线，使用链上价格可能获得过期数据，因此需要额外的安全检查
+  - 只能使用原子Provider (ChainlinkPriceFeedProvider)
+- **常规操作** (`setPrices`): 
+  - 由Keeper提交链下签名价格数据的操作，如订单执行、清算
+  - 不需要验证排序器状态，因为使用的是链下签名的实时价格数据
 
-**2. 不同OracleProvider的机制**
+**2. 时间戳统一机制**
+由于不同Provider的数据来源和延迟不同，需要通过时间戳调整来统一时间：
+- **原子Provider** (`ChainlinkPriceFeedProvider`): 使用当前区块时间戳，不需要调整
+- **常规Provider**: 使用链下数据，需要通过`shouldAdjustTimestamp() = true`启用时间戳调整
+- **调整机制**: `validatedPrice.timestamp -= timestampAdjustment` 减去配置的调整值
+- **目的**: 确保不同来源的价格数据在时间上保持同步，避免时间戳范围超限错误
+
+**3. 不同OracleProvider的机制**
 
 **ChainlinkPriceFeedProvider (原子Provider):**
 - 链上价格feeds，实时获取
@@ -185,31 +198,40 @@ graph TD
 - 高频低延迟的链下签名报告
 - 通过验证器验证数据流
 - 支持bid/ask价差和价差缩减
+- `shouldAdjustTimestamp: true` - 需要时间戳调整
 - 主要用于常规操作
 
 **EdgeDataStreamProvider (常规Provider):**
 - 自定义的链下签名报告
 - 有独立的验证器
 - 支持灵活的数据格式
+- `shouldAdjustTimestamp: true` - 需要时间戳调整
 
 **GmOracleProvider (常规Provider，备用):**
-- GMX多签名Oracle
-- 链下签名，多个签名者验证
-- 中位数价格计算
-- 通常作为备用方案
+- **备用价格源** - 仅在其他Provider不可用时使用
+- GMX自建多签名Oracle，不是原子Provider
+- 链下签名，多个签名者验证，计算中位数价格
+- `shouldAdjustTimestamp: true` - 需要时间戳调整以统一不同来源的时间
+- 支持时间窗口机制 (minOracleBlockNumber到maxOracleBlockNumber)
 
 ### 使用场景选择
 
 **原子操作场景:**
 - 必须使用标记为 `isAtomicOracleProvider: true` 的提供商
 - 主要是 `ChainlinkPriceFeedProvider`
-- 需要验证Sequencer状态
-- 用于需要即时确认的操作
+- **必须验证L2排序器状态** - 防止在排序器离线时使用过期价格
+- **LP优先保护设计**:
+  - **原子提取** (`executeAtomicWithdrawal`): LP可以直接提取流动性，无需Keeper
+  - **即时执行**: 用户无需等待，立即获得流动性控制权
+  - **条件限制**: 仅当所有底层市场都配置Chainlink feeds时可用
+  - **设计理念**: LP是协议基础，应享有更高的操作优先级和安全保护
 
 **常规操作场景:**
 - 使用Token配置的Provider (`oracleProviderForTokenKey`)
 - 默认通常是 `ChainlinkDataStreamProvider`
 - 由Keeper提交链下签名的价格数据
+- **Trader功能丰富**: 支持复杂订单、杠杆、swap路径等
+- **延迟可接受**: 通过Keeper执行，换取更复杂的功能和更低的gas成本
 - 用于订单执行、清算等操作
 
 这个重新设计的图表准确反映了GMX Synthetics中不同Oracle提供商的实际使用机制和选择逻辑。数据流和GM Oracle都是链下签名报告，但在不同场景下有不同的使用优先级和验证机制。
@@ -221,9 +243,13 @@ graph TD
     ActionType{"操作类型判断"}
     
     AtomicAction["`**原子操作 (Atomic Action)**
-    - 原子提取 executeAtomicWithdrawal
-    - Config执行 executeWithOraclePrices
-    - 需要即时价格确认`"]
+    - **原子提取** executeAtomicWithdrawal
+      · LP可以直接执行，无需等待Keeper
+      · 即时流动性提取，优先保护LP利益
+      · 仅限所有底层市场都有Chainlink feeds的情况
+    - **Config执行** executeWithOraclePrices
+      · 协议配置更新时的价格确认
+    - **核心特点**: 即时确认、无中介、LP优先`"]
     
     RegularAction["`**常规操作 (Regular Action)**
     - 订单执行 executeOrder
@@ -260,11 +286,11 @@ graph TD
     
     GmOracle["`**GmOracleProvider**
     **常规Provider (备用)**
-    - 多签名Oracle
-    - 链下签名报告
-    - 中位数价格计算
-    - 多个签名者验证
-    - 通常作为备用方案`"]
+    - GMX自建多签名Oracle
+    - 备用价格源，非原子Provider
+    - 链下签名报告，中位数价格计算
+    - 时间窗口机制支持并发
+    - 需要时间戳调整统一时间`"]
     
     OrderExecution{"`**订单执行逻辑:**
     **Market Orders:**
@@ -283,13 +309,15 @@ graph TD
     PriceValidation["`**价格验证流程:**
     1. **Sequencer验证** (仅原子操作)
        - 检查L2 Sequencer状态
-       - 确保价格数据可靠性
+       - 防止排序器离线时使用过期价格
+       - 确保原子操作的安全性
     2. **Provider验证**
        - 原子操作：只能用原子Provider
        - 常规操作：使用Token配置的Provider
-    3. **时间戳调整**
-       - 根据Provider类型调整
-       - 原子Provider不调整时间戳
+    3. **时间戳调整统一**
+       - 原子Provider：不调整，使用区块时间戳
+       - 常规Provider：调整以统一不同来源时间
+       - 避免时间戳范围超限错误
     4. **价格年龄检查**
        - MAX_ATOMIC_ORACLE_PRICE_AGE (原子)
        - MAX_ORACLE_PRICE_AGE (常规)
@@ -309,10 +337,11 @@ graph TD
     - 可配置的签名者
     - 灵活的数据格式
     **GM Oracle:**
-    - GMX自建多签Oracle
-    - 链下价格签名
-    - 社区/团队控制的签名者
-    - 紧急情况备用方案`"]
+    - GMX自建多签Oracle (备用价格源)
+    - 链下价格签名，非原子Provider
+    - 中位数价格计算，时间窗口并发支持
+    - 需要时间戳调整统一不同来源时间
+    - 仅在其他Provider不可用时使用`"]
     
     PriceUsage["`**价格使用策略:**
     **Long Position增加:**
@@ -354,8 +383,11 @@ graph TD
     DataStreamMechanism -.-> EdgeDataStream
     DataStreamMechanism -.-> GmOracle
     
-    SequencerCheck["`**Sequencer检查**
-    (仅原子操作)`"]
+    SequencerCheck["`**L2排序器状态检查**
+    (仅原子操作)
+    - 验证排序器是否正常运行
+    - 防止排序器离线时使用过期价格
+    - 确保原子操作的安全性`"]
     
     AtomicAction --> SequencerCheck
     SequencerCheck --> AtomicProviderCheck
