@@ -38,15 +38,7 @@ flowchart LR
     class DD,EE,FF,GG,HH,II,JJ,KK,LL,MM,NN,OO,PP workflow
     class QQ,RR,SS,TT,UU,VV architecture
 ``` 
-让我详细梳理一下GMX Synthetics中`Subaccount`（子账号）系统的功能。
-Ran tool
-Ran tool
-Ran tool
-Search files...
-Search files...
-Ran tool
-Ran tool
-Ran tool
+
 # GMX Synthetics 子账号 (Subaccount) 系统功能梳理
 
 基于我对代码的深入分析，以下是GMX Synthetics中子账号系统的完整功能梳理：
