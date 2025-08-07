@@ -1,4 +1,71 @@
-
+```mermaid
+flowchart TD
+    A[用户想要执行交易] --> B{选择执行方式}
+    
+    B -->|普通方式| C[用户直接调用ExchangeRouter.createOrder]
+    B -->|无Gas执行| D[用户使用Gelato Relay]
+    
+    %% 普通方式
+    C --> E[订单存储在链上]
+    
+    %% Gelato Relay方式 
+    D --> F[用户签名交易请求]
+    F --> G[GelatoRelayRouter.createOrder]
+    G --> H[验证签名和权限]
+    H --> I[处理代币许可和外部调用]
+    I --> J[处理Gelato费用<br/>兑换代币为ETH]
+    J --> K[调用OrderHandler.createOrder]
+    K --> E
+    
+    %% 订单等待执行
+    E --> L[订单在链上等待执行]
+    L --> M[Gelato Keeper监听订单事件]
+    
+    %% Keeper执行流程
+    M --> N{订单触发条件检查}
+    N -->|条件不满足| O[继续等待]
+    N -->|条件满足| P[Gelato Keeper调用OrderHandler.executeOrder]
+    
+    O --> M
+    
+    %% 订单执行
+    P --> Q[验证Keeper权限<br/>onlyOrderKeeper]
+    Q --> R[获取Oracle价格]
+    R --> S[验证触发价格和时间]
+    S --> T{订单类型}
+    
+    T -->|增仓订单| U[IncreaseOrderExecutor]
+    T -->|减仓订单| V[DecreaseOrderExecutor] 
+    T -->|交换订单| W[SwapOrderExecutor]
+    
+    U --> X[ExecuteOrderUtils.executeOrder]
+    V --> X
+    W --> X
+    
+    X --> Y[更新仓位状态]
+    Y --> Z[更新资金费率和借贷状态]
+    Z --> AA[分发影响池资金]
+    AA --> BB[处理交换和仓位变化]
+    BB --> CC[验证市场代币余额]
+    CC --> DD[发出执行事件]
+    DD --> EE[执行回调函数]
+    EE --> FF[支付执行费用给Keeper]
+    FF --> GG[向用户退还剩余费用]
+    GG --> HH[订单执行完成]
+    
+    %% 样式设置
+    classDef userAction fill:#e1f5fe
+    classDef gelatoRelay fill:#f3e5f5
+    classDef orderStorage fill:#fff3e0
+    classDef keeperExecution fill:#e8f5e8
+    classDef orderExecution fill:#f1f8e9
+    
+    class A,F userAction
+    class D,G,H,I,J,K gelatoRelay
+    class E,L orderStorage
+    class M,N,O,P,Q keeperExecution
+    class R,S,T,U,V,W,X,Y,Z,AA,BB,CC,DD,EE,FF,GG,HH orderExecution
+```
 
 
 ## Gelato Keeper的核心作用
@@ -12,7 +79,6 @@
  * For gasless actions the funds are deducted from account.
  * Account must have enough funds to pay fees, regardless of the recipient's balance.
  */
-```
 
 **工作机制**：
 - 用户签名交易但不直接发送到链上
