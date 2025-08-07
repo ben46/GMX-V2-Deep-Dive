@@ -66,7 +66,20 @@ flowchart TD
     class M,N,O,P,Q keeperExecution
     class R,S,T,U,V,W,X,Y,Z,AA,BB,CC,DD,EE,FF,GG,HH orderExecution
 ```
+## Gelato Keeper的双重角色
 
+### 1. **Gelato Relay帮助用户创建订单（createOrder）**
+- 用户无需持有ETH支付Gas费用
+- 通过GelatoRelayRouter签名和提交订单
+- Gelato Relay代为支付创建订单的Gas费用
+- 最终调用`OrderHandler.createOrder`将订单存储在链上
+
+### 2. **Gelato Keeper执行订单（executeOrder）**
+- 监听链上的订单事件
+- 检查订单触发条件（价格、时间等）
+- 当条件满足时，调用`OrderHandler.executeOrder`
+- 具有`onlyOrderKeeper`权限
+- 获得执行费用作为奖励
 
 ## Gelato Keeper的核心作用
 
